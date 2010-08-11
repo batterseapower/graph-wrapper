@@ -9,7 +9,7 @@ if [ "$version_response" != "yes" ]; then
     exit 1
 fi
 
-sdist_output=`runghc Setup.lhs sdist`
+sdist_output=`runghc Setup.hs sdist`
 
 if [ "$?" != "0" ]; then
     echo "Cabal sdist failed, aborting"
