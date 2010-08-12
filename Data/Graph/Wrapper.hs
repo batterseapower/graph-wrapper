@@ -24,15 +24,19 @@ module Data.Graph.Wrapper (
     
     reachableVertices, hasPath,
     
-    topologicalSort,
+    topologicalSort, depthNumbering,
     
     SCC(..), stronglyConnectedComponents, sccGraph
   ) where
 
 import Control.Arrow (second)
+import Control.Monad
+import Control.Monad.ST
 
 import Data.Array
+import Data.Array.ST
 import qualified Data.Graph as G
+import qualified Data.IntSet as IS
 import Data.List (sortBy, mapAccumL)
 import Data.Maybe (fromMaybe, fromJust)
 import qualified Data.Map as M
@@ -51,6 +55,15 @@ snd3 (_, b, _) = b
 
 thd3 :: (a, b, c) -> c
 thd3 (_, _, c) = c
+
+
+-- amapWithKey :: Ix i => (i -> v -> v') -> Array i v -> Array i v'
+-- -- More efficient, but not portable (uses GHC.Arr exports):
+-- --amapWithKey f arr = unsafeArray' (bounds arr) (numElements arr) [(i, f i (unsafeAt arr i)) | i <- [0 .. n - 1]]
+-- amapWithKey f arr = array (bounds arr) [(i, f i v) | (i, v) <- assocs arr]
+
+amapWithKeyM :: (Monad m, Ix i) => (i -> v -> m v') -> Array i v -> m (Array i v')
+amapWithKeyM f arr = liftM (array (bounds arr)) $ mapM (\(i, v) -> liftM (\v' -> (i, v')) $ f i v) (assocs arr)
 
 
 -- | An edge from the first vertex to the second
@@ -76,9 +89,14 @@ instance Traversable.Traversable (Graph i) where
     traverse f g = fmap (\gvva -> g { gVertexVertexArray = gvva }) (Traversable.traverse f (gVertexVertexArray g))
 
 
+{-# RULES "indexGVertex/gVertexIndex" forall g i. gVertexIndex g (indexGVertex g i) = i #-}
+{-# RULES "gVertexIndex/indexGVertex" forall g v. indexGVertex g (gVertexIndex g v) = v #-}
+
+{-# NOINLINE [0] indexGVertex #-}
 indexGVertex :: Ord i => Graph i v -> i -> G.Vertex
 indexGVertex g i = indexGVertex' (indexGVertexArray g) i
 
+{-# NOINLINE [0] gVertexIndex #-}
 gVertexIndex :: Graph i v -> G.Vertex -> i
 gVertexIndex g gv = indexGVertexArray g ! gv
 
@@ -175,7 +193,7 @@ transpose g = g { graph = G.transposeG (graph g) }
 -- | Topological sort of of the graph (<http://en.wikipedia.org/wiki/Topological_sort>). If the graph is acyclic,
 -- vertices will only appear in the list once all of those vertices with arrows to them have already appeared.
 --
--- Vertex i precedes j in the output whenever j is reachable from i but not vice versa.
+-- Vertex /i/ precedes /j/ in the output whenever /j/ is reachable from /i/ but not vice versa.
 topologicalSort :: Graph i v -> [i]
 topologicalSort g = map (gVertexIndex g) $ G.topSort (graph g)
 
@@ -184,8 +202,49 @@ reachableVertices :: Ord i => Graph i v -> i -> [i]
 reachableVertices g = map (gVertexIndex g) . G.reachable (graph g) . indexGVertex g
 
 -- | Is the second vertex reachable by following edges from the first vertex?
-hasPath :: Ord i => Graph i v -> Edge i -> Bool
-hasPath g (i1, i2) = G.path (graph g) (indexGVertex g i1) (indexGVertex g i2)
+--
+-- It is worth sharing a partial application of 'hasPath' to the first vertex if you are testing for several
+-- vertices being reachable from it.
+hasPath :: Ord i => Graph i v -> i -> i -> Bool
+hasPath g i1 = (`elem` reachableVertices g i1)
+
+-- | Number the vertices in the graph by how far away they are from the given roots. The roots themselves have depth 0,
+-- and every subsequent link we traverse adds 1 to the depth. If a vertex is not reachable it will have a depth of 'Nothing'.
+depthNumbering :: Ord i => Graph i v -> [i] -> Graph i (v, Maybe Int)
+depthNumbering g is = runST $ do
+    -- This array records the minimum known depth for the node at the moment
+    depth_array <- newArray (bounds (graph g)) Nothing :: ST s (STArray s G.Vertex (Maybe Int))
+    let -- Lets us adjust the known depth given a new observation
+        atDepth gv depth = do
+            mb_old_depth <- readArray depth_array gv
+            let depth' = maybe depth (`min` depth) mb_old_depth
+            depth' `seq` writeArray depth_array gv (Just depth')
+
+    -- Do an depth-first search on the graph (checking for cycles to prevent non-termination),
+    -- recording the depth at which any node was seen in that array.
+    let gos seen depth gvs = mapM_ (go seen depth) gvs
+
+        go seen depth gv 
+          | depth `seq` False = error "depthNumbering: unreachable"
+          | gv `IS.member` seen = return ()
+          | otherwise = do
+            gv `atDepth` depth
+            gos (IS.insert gv seen) (depth + 1) (graph g ! gv)
+    gos IS.empty 0 (map (indexGVertex g) is)
+    
+    -- let go _    _     []  = return ()
+    --     go seen depth gvs = do
+    --         let go_one (seen, next_gvs) gv
+    --               | gv `IS.member` seen = return (seen, next_gvs)
+    --               | otherwise = do gv `atDepth` depth
+    --                                return (IS.insert gv seen, next_gvs ++ (graph g ! gv))
+    --         (seen, next_gvs) <- foldM go_one (seen, []) gvs
+    --         go seen (depth + 1) next_gvs
+    -- 
+    -- go IS.empty 0 (map (indexGVertex g) is)
+    
+    gvva <- amapWithKeyM (\gv v -> liftM (\mb_depth -> (v, mb_depth)) $ readArray depth_array gv) (gVertexVertexArray g)
+    return $ g { gVertexVertexArray = gvva }
 
 
 data SCC i = AcyclicSCC i
@@ -212,8 +271,8 @@ instance Traversable.Traversable SCC where
 --   1) Within the SCC itself (in the case of a 'CyclicSCC' only)
 --   2) Or from a node in a SCC later on in the list
 --
--- Vertex i strictly precedes j in the output whenever i is reachable from j but not vice versa.
--- Vertex i occurs in the same SCC as j whenever both i is reachable from j and j is reachable from i.
+-- Vertex /i/ strictly precedes /j/ in the output whenever /i/ is reachable from /j/ but not vice versa.
+-- Vertex /i/ occurs in the same SCC as /j/ whenever both /i/ is reachable from /j/ and /j/ is reachable from /i/.
 stronglyConnectedComponents :: Graph i v -> [SCC i]
 stronglyConnectedComponents g = map decode forest
   where
