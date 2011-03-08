@@ -15,6 +15,7 @@ module Data.Graph.Wrapper (
     vertex,
     
     fromListSimple, fromList, fromListBy, fromVerticesEdges,
+    toList,
     
     vertices, edges, successors,
     
@@ -157,6 +158,13 @@ indexGVertex' key_map k = go 0 (snd (bounds key_map))
                            EQ -> mid
                            GT -> go (mid + 1) b
      where mid = (a + b) `div` 2
+
+
+-- | Morally, the inverse of 'fromList'. The order of the elements in the output list is unspecified, as is the order of the edges
+-- in each node's adjacency list. For this reason, @toList . fromList@ is not necessarily the identity function.
+toList :: Ord i => Graph i v -> [(i, v, [i])]
+toList g = [(indexGVertexArray g ! m, gVertexVertexArray g ! m, map (indexGVertexArray g !) ns) | (m, ns) <- assocs (graph g)]
+
 
 -- | Exhaustive list of vertices in the graph
 vertices :: Graph i v -> [i]
