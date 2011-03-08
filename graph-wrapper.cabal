@@ -8,7 +8,7 @@ License:            BSD3
 License-File:       LICENSE
 Author:             Max Bolingbroke
 Synopsis:           A wrapper around the standard Data.Graph with a less awkward interface
-Category:           Data Structures
+Category:           Data Structures, Graphs
 
 Library
     Exposed-Modules:    Data.Graph.Wrapper
