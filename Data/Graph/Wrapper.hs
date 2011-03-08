@@ -14,7 +14,7 @@ module Data.Graph.Wrapper (
     
     vertex,
     
-    fromListSimple, fromList, fromListBy, fromVerticesEdges,
+    fromListSimple, fromList, fromListLenient, fromListBy, fromVerticesEdges,
     toList,
     
     vertices, edges, successors,
@@ -41,7 +41,7 @@ import Data.Array.ST
 import qualified Data.Graph as G
 import qualified Data.IntSet as IS
 import Data.List (sortBy, mapAccumL)
-import Data.Maybe (fromMaybe, fromJust)
+import Data.Maybe (fromMaybe, fromJust, mapMaybe)
 import qualified Data.Map as M
 import Data.Ord
 import qualified Data.Set as S
@@ -67,41 +67,6 @@ thd3 (_, _, c) = c
 
 amapWithKeyM :: (Monad m, Ix i) => (i -> v -> m v') -> Array i v -> m (Array i v')
 amapWithKeyM f arr = liftM (array (bounds arr)) $ mapM (\(i, v) -> liftM (\v' -> (i, v')) $ f i v) (assocs arr)
-
-
--- | An edge from the first vertex to the second
-type Edge i = (i, i)
-
-instance (Ord i, Show i, Show v) => Show (Graph i v) where
-    show g = "fromVerticesEdges " ++ show ([(i, vertex g i) | i <- vertices g]) ++ " " ++ show (edges g)
-
-instance Functor (Graph i) where
-    fmap f g = g { gVertexVertexArray = fmap f (gVertexVertexArray g) }
-
-instance Foldable.Foldable (Graph i) where
-    foldMap f g = Foldable.foldMap f (gVertexVertexArray g)
-
-instance Traversable.Traversable (Graph i) where
-    traverse f g = fmap (\gvva -> g { gVertexVertexArray = gvva }) (Traversable.traverse f (gVertexVertexArray g))
-
-
-{-# RULES "indexGVertex/gVertexIndex" forall g i. gVertexIndex g (indexGVertex g i) = i #-}
-{-# RULES "gVertexIndex/indexGVertex" forall g v. indexGVertex g (gVertexIndex g v) = v #-}
-
-{-# NOINLINE [0] indexGVertex #-}
-indexGVertex :: Ord i => Graph i v -> i -> G.Vertex
-indexGVertex g i = indexGVertex' (indexGVertexArray g) i
-
-{-# NOINLINE [0] gVertexIndex #-}
-gVertexIndex :: Graph i v -> G.Vertex -> i
-gVertexIndex g gv = indexGVertexArray g ! gv
-
-gVertexVertex :: Graph i v -> G.Vertex -> v
-gVertexVertex g gv = gVertexVertexArray g ! gv
-
--- | Retrieve data associated with the vertex
-vertex :: Ord i => Graph i v -> i -> v
-vertex g = gVertexVertex g . indexGVertex g
 
 
 -- | Construct a 'Graph' where the vertex data double up as the indices.
@@ -134,40 +99,34 @@ fromVerticesEdges vertices edges | M.null final_edges_map = fromList done_vertic
 -- Unlike 'Data.Graph.graphFromEdges', indexes in the edge list that do not correspond to the index of some item in the
 -- input list are reported as an error.
 fromList :: Ord i => [(i, v, [i])] -> Graph i v
-fromList vertices = G graph key_map vertex_map
+fromList = fromList' False
+
+-- | Construct a 'Graph' that contains the given vertex data, linked up according to the supplied index and edge list.
+--
+-- Like 'Data.Graph.graphFromEdges', indexes in the edge list that do not correspond to the index of some item in the
+-- input list are silently ignored.
+fromListLenient :: Ord i => [(i, v, [i])] -> Graph i v
+fromListLenient = fromList' True
+
+{-# INLINE fromList' #-}
+fromList' :: Ord i => Bool -> [(i, v, [i])] -> Graph i v
+fromList' lenient vertices = G graph key_map vertex_map
   where
     max_v           = length vertices - 1
     bounds0         = (0, max_v) :: (G.Vertex, G.Vertex)
     sorted_vertices = sortBy (comparing fst3) vertices
-  
-    graph       = array bounds0 $ [0..] `zip` map (map (indexGVertex' key_map) . thd3) sorted_vertices
-    key_map     = array bounds0 $ [0..] `zip` map fst3                                 sorted_vertices
-    vertex_map  = array bounds0 $ [0..] `zip` map snd3                                 sorted_vertices
-
-indexGVertex' :: Ord i => Array G.Vertex i -> i -> G.Vertex
-indexGVertex' key_map k = go 0 (snd (bounds key_map))
-  where
-    go a b | a > b = error "Data.Graph.Wrapper.fromList: one of the edges of a vertex pointed to a vertex that was not supplied in the input"
-           | otherwise = case compare k (key_map ! mid) of
-                           LT -> go a (mid - 1)
-                           EQ -> mid
-                           GT -> go (mid + 1) b
-     where mid = (a + b) `div` 2
+    
+    index_vertex = if lenient then mapMaybe (indexGVertex'_maybe key_map) else map (indexGVertex' key_map)
+    
+    graph       = array bounds0 $ [0..] `zip` map (index_vertex . thd3) sorted_vertices
+    key_map     = array bounds0 $ [0..] `zip` map fst3                  sorted_vertices
+    vertex_map  = array bounds0 $ [0..] `zip` map snd3                  sorted_vertices
 
 
 -- | Morally, the inverse of 'fromList'. The order of the elements in the output list is unspecified, as is the order of the edges
 -- in each node's adjacency list. For this reason, @toList . fromList@ is not necessarily the identity function.
 toList :: Ord i => Graph i v -> [(i, v, [i])]
 toList g = [(indexGVertexArray g ! m, gVertexVertexArray g ! m, map (indexGVertexArray g !) ns) | (m, ns) <- assocs (graph g)]
-
-
--- | Exhaustive list of vertices in the graph
-vertices :: Graph i v -> [i]
-vertices g = map (gVertexIndex g) $ G.vertices (graph g)
-
--- | Exhaustive list of edges in the graph
-edges :: Graph i v -> [Edge i]
-edges g = map (\(x, y) -> (gVertexIndex g x, gVertexIndex g y)) $ G.edges (graph g)
 
 -- | Find the vertices we can reach from a vertex with the given indentity
 successors :: Ord i => Graph i v -> i -> [i]
