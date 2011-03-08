@@ -12,6 +12,7 @@ Category:           Data Structures, Graphs
 
 Library
     Exposed-Modules:    Data.Graph.Wrapper
+                        Data.Graph.Wrapper.Internal
     
     Build-Depends:      base >= 3.0 && < 5.0,
                         array >= 0.3 && < 0.4,

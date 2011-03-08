@@ -30,6 +30,8 @@ module Data.Graph.Wrapper (
     SCC(..), stronglyConnectedComponents, sccGraph
   ) where
 
+import Data.Graph.Wrapper.Internal
+
 import Control.Arrow (second)
 import Control.Monad
 import Control.Monad.ST
@@ -69,13 +71,6 @@ amapWithKeyM f arr = liftM (array (bounds arr)) $ mapM (\(i, v) -> liftM (\v' ->
 
 -- | An edge from the first vertex to the second
 type Edge i = (i, i)
-
--- | A directed graph
-data Graph i v = G {
-    graph :: G.Graph,
-    indexGVertexArray :: Array G.Vertex i,
-    gVertexVertexArray :: Array G.Vertex v
-  }
 
 instance (Ord i, Show i, Show v) => Show (Graph i v) where
     show g = "fromVerticesEdges " ++ show ([(i, vertex g i) | i <- vertices g]) ++ " " ++ show (edges g)
