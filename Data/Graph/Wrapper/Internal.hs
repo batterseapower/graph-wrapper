@@ -5,6 +5,8 @@
 {-# OPTIONS_HADDOCK not-home #-}
 module Data.Graph.Wrapper.Internal where
 
+import Control.Applicative (Applicative)
+
 import Data.Array
 import Data.Maybe (fromMaybe)
 import qualified Data.Graph as G
@@ -39,6 +41,13 @@ instance Foldable.Foldable (Graph i) where
 
 instance Traversable.Traversable (Graph i) where
     traverse f g = fmap (\gvva -> g { gVertexVertexArray = gvva }) (Traversable.traverse f (gVertexVertexArray g))
+
+
+traverseWithKey :: Applicative t => (i -> a -> t b) -> Graph i a -> t (Graph i b)
+traverseWithKey f g = fmap (\gvva -> g { gVertexVertexArray = gvva }) (traverseWithIndex (\gv -> f (gVertexIndex g gv)) (gVertexVertexArray g))
+  where
+    traverseWithIndex :: Applicative t => (G.Vertex -> a -> t b) -> Array G.Vertex a -> t (Array G.Vertex b)
+    traverseWithIndex f a = fmap (array (bounds a)) $ flip Traversable.traverse (assocs a) $ \(k, v) -> fmap ((,) k) $ f k v
 
 
 {-# RULES "indexGVertex/gVertexIndex" forall g i. gVertexIndex g (indexGVertex g i) = i #-}

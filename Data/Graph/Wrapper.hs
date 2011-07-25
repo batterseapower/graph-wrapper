@@ -27,7 +27,9 @@ module Data.Graph.Wrapper (
     
     topologicalSort, depthNumbering,
     
-    SCC(..), stronglyConnectedComponents, sccGraph
+    SCC(..), stronglyConnectedComponents, sccGraph,
+    
+    traverseWithKey
   ) where
 
 import Data.Graph.Wrapper.Internal
