@@ -1,7 +1,7 @@
 Cabal-Version:      >= 1.2
 Build-Type:         Simple
 Name:               graph-wrapper
-Version:            0.2.3
+Version:            0.2.4
 Maintainer:         Max Bolingbroke <batterseapower@hotmail.com>
 Homepage:           http://www.github.com/batterseapower/graph-wrapper
 License:            BSD3
